@@ -499,6 +499,74 @@ func TestParseModbusDataInsufficientRegisters(t *testing.T) {
 	}
 }
 
+func TestParseModbusDataFloat16(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         []byte
+		expectedValue float64
+	}{
+		{
+			name:          "float16 zero",
+			input:         []byte{0x00, 0x00},
+			expectedValue: 0,
+		},
+		{
+			name:          "float16 one",
+			input:         []byte{0x3C, 0x00}, // 0 01111 0000000000 = 1.0
+			expectedValue: 1.0,
+		},
+		{
+			name:          "float16 negative one",
+			input:         []byte{0xBC, 0x00}, // 1 01111 0000000000 = -1.0
+			expectedValue: -1.0,
+		},
+		{
+			name:          "float16 one and a half",
+			input:         []byte{0x3E, 0x00}, // 0 01111 1000000000 = 1.5
+			expectedValue: 1.5,
+		},
+		{
+			name:          "float16 max normal",
+			input:         []byte{0x7B, 0xFF}, // 0 11110 1111111111 = 65504
+			expectedValue: 65504,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			def := config.MetricDef{
+				DataType: config.ModbusFloat16,
+			}
+			floatValue, err := parseModbusData(def, test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if floatValue != test.expectedValue {
+				t.Fatalf("expected %v but got %v", test.expectedValue, floatValue)
+			}
+		})
+	}
+}
+
+func TestFloat16ToFloat64(t *testing.T) {
+	// Test special values
+	if !math.IsInf(float16ToFloat64(0x7C00), 1) {
+		t.Fatal("expected +Inf")
+	}
+	if !math.IsInf(float16ToFloat64(0xFC00), -1) {
+		t.Fatal("expected -Inf")
+	}
+	if !math.IsNaN(float16ToFloat64(0x7C01)) {
+		t.Fatal("expected NaN")
+	}
+	// Subnormal: smallest subnormal = 2^(-14) * (1/1024) = 2^(-24)
+	v := float16ToFloat64(0x0001)
+	expected := math.Exp2(-24)
+	if v != expected {
+		t.Fatalf("expected %v but got %v", expected, v)
+	}
+}
+
 func TestParseModbusDataFloat32(t *testing.T) {
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data, math.Float32bits(32))

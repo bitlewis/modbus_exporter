@@ -303,7 +303,12 @@ func parseModbusData(d config.MetricDef, rawData []byte) (float64, error) {
 			if len(rawData) != 2 {
 				return float64(0), &InsufficientRegistersError{fmt.Sprintf("expected 2 bytes, got %v", len(rawData))}
 			}
-			panic("implement")
+			rawDataWithEndianness, err := convertEndianness16b(d.Endianness, rawData)
+			if err != nil {
+				return float64(0), err
+			}
+			data := binary.BigEndian.Uint16(rawDataWithEndianness)
+			return scaleValue(d.Factor, float16ToFloat64(data)), nil
 		}
 	case config.ModbusInt16:
 		{
@@ -524,4 +529,37 @@ func convertEndianness64b(rawEndianness config.EndiannessType, rawData []byte) (
 			rawData[7]}
 	}
 	return data, nil
+}
+
+// float16ToFloat64 converts an IEEE 754 half-precision (16-bit) float to float64.
+// Format: 1 sign bit, 5 exponent bits, 10 mantissa bits.
+func float16ToFloat64(u uint16) float64 {
+	sign := uint64((u >> 15) & 0x1)
+	exp := int((u >> 10) & 0x1f)
+	mant := uint64(u & 0x03ff)
+
+	switch exp {
+	case 0:
+		if mant == 0 {
+			// Zero (positive or negative)
+			return math.Float64frombits(sign << 63)
+		}
+		// Subnormal: value = (-1)^sign * 2^(-14) * (mant / 1024)
+		f := float64(mant) / 1024.0 * math.Exp2(-14)
+		if sign == 1 {
+			f = -f
+		}
+		return f
+	case 0x1f:
+		if mant == 0 {
+			// Infinity
+			return math.Float64frombits(sign<<63 | 0x7FF<<52)
+		}
+		// NaN
+		return math.Float64frombits(sign<<63 | 0x7FF<<52 | mant<<42)
+	default:
+		// Normal: remap exponent from float16 bias (15) to float64 bias (1023)
+		exp64 := uint64(exp-15+1023) & 0x7FF
+		return math.Float64frombits(sign<<63 | exp64<<52 | mant<<42)
+	}
 }
